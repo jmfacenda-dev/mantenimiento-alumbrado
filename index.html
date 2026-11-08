@@ -63,6 +63,21 @@ button.active {
 
 <body>
 
+
+<div id="acceso" style="background:white; padding:15px; text-align:center;">
+    <h3>Acceso al mantenimiento</h3>
+    <input id="email" type="email" placeholder="Correo electrónico">
+    <input id="password" type="password" placeholder="Contraseña">
+    <button onclick="iniciarSesion()">Entrar</button>
+    <p id="mensajeAcceso"></p>
+</div>
+
+<div id="sesion" style="display:none; padding:10px; text-align:center; background:#e8f0e8;">
+    Sesión iniciada
+    <button onclick="cerrarSesion()">Cerrar sesión</button>
+</div>
+
+
 <header>
     <h2>Mantenimiento de alumbrado</h2>
 </header>
@@ -73,8 +88,22 @@ button.active {
     <button onclick="mostrarPlano(3)" id="b3">Plano 3</button>
 </nav>
 
+<div style="text-align:center; padding:10px;">
+    <button id="btnAñadir" style="display:none;"
+        onclick="activarModoAñadir()">
+        + Añadir luminaria
+    </button>
+    <span id="estadoAñadir"></span>
+</div>
+
 <div id="plano">
-    <img id="imagen" src="Planos Luces 1.png">
+    <div id="superficie" style="position:relative; width:100%;">
+        <img id="imagen" src="Planos Luces 1.png"
+             style="display:block; width:100%; height:auto;">
+        <div id="marcadores"
+             style="position:absolute; inset:0; pointer-events:none;">
+        </div>
+    </div>
 </div>
 
 <script>
@@ -88,12 +117,408 @@ function mostrarPlano(numero) {
 
     document.getElementById("imagen").src = nombres[numero];
 
+    planoActual = numero;
+    cargarLuminarias();    
+
     for (let i = 1; i <= 3; i++) {
         document.getElementById("b" + i)
             .classList.toggle("active", i === numero);
     }
 }
 </script>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<script>
+const SUPABASE_URL = "https://feqyolpockztgexulfvq.supabase.co";
+const SUPABASE_KEY = "sb_publishable_8go-U5MVjhgDf0Fmx-aLRg_bWz4gtCC";
+
+const supabaseClient = supabase.createClient(
+    SUPABASE_URL,
+    SUPABASE_KEY
+);
+
+console.log("Conexión con Supabase preparada");
+</script>
+
+<script>
+async function iniciarSesion() {
+    const email = document.getElementById("email").value;
+    const password = document.getElementById("password").value;
+
+    const { data, error } = await supabaseClient.auth.signInWithPassword({
+        email,
+        password
+    });
+
+    if (error) {
+        document.getElementById("mensajeAcceso").textContent = error.message;
+        return;
+    }
+
+    actualizarSesion(data.session);
+}
+
+async function cerrarSesion() {
+    await supabaseClient.auth.signOut();
+    actualizarSesion(null);
+}
+
+function actualizarSesion(session) {
+    document.getElementById("acceso").style.display =
+        session ? "none" : "block";
+
+    document.getElementById("sesion").style.display =
+        session ? "block" : "none";
+
+    document.getElementById("btnAñadir").style.display =
+        session ? "inline-block" : "none";        
+}
+
+supabaseClient.auth.getSession().then(({ data }) => {
+    actualizarSesion(data.session);
+});
+
+supabaseClient.auth.onAuthStateChange((event, session) => {
+    actualizarSesion(session);
+});
+
+let planoActual = 1;
+let modoAñadir = false;
+
+// Activar o desactivar la colocación
+function activarModoAñadir() {
+    modoAñadir = !modoAñadir;
+
+    document.getElementById("btnAñadir").textContent =
+        modoAñadir ? "Cancelar colocación" : "+ Añadir luminaria";
+
+    document.getElementById("estadoAñadir").textContent =
+        modoAñadir ? " Toca el lugar de la luminaria en el plano" : "";
+}
+
+// Cargar luminarias del plano seleccionado
+async function cargarLuminarias() {
+    const { data, error } = await supabaseClient
+        .from("luminarias")
+        .select("*")
+        .eq("plano", planoActual);
+
+    if (error) {
+        console.error(error);
+        return;
+    }
+
+    const contenedor = document.getElementById("marcadores");
+    contenedor.innerHTML = "";
+
+    data.forEach(luz => {
+        const punto = document.createElement("button");
+
+        punto.textContent = luz.codigo;
+     punto.style.cssText = `
+    position:absolute;
+    left:${luz.x}%;
+    top:${luz.y}%;
+    transform:translate(-50%,-50%);
+    background:#e6ae20;
+    color:#222;
+    border:1px solid white;
+    border-radius:50%;
+    width:18px;
+    height:18px;
+    padding:0;
+    font-size:7px;
+    font-weight:bold;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    pointer-events:auto;
+`;
+
+        punto.onclick = (e) => {
+    e.stopPropagation();
+    abrirFicha(luz);
+};
+
+        contenedor.appendChild(punto);
+    });
+}
+
+// Detectar toque o clic sobre el plano
+document.getElementById("superficie").addEventListener("click", async (e) => {
+
+    if (!modoAñadir) return;
+
+    const rect = e.currentTarget.getBoundingClientRect();
+
+    const x = ((e.clientX - rect.left) / rect.width) * 100;
+    const y = ((e.clientY - rect.top) / rect.height) * 100;
+
+    const { data: ultima } = await supabaseClient
+        .from("luminarias")
+        .select("codigo")
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+    let numero = 1;
+
+    if (ultima && ultima.length > 0) {
+        numero = parseInt(ultima[0].codigo.replace("L", "")) + 1;
+    }
+
+    const codigo = "L" + String(numero).padStart(3, "0");
+
+    const { error } = await supabaseClient
+        .from("luminarias")
+        .insert({
+            codigo: codigo,
+            plano: planoActual,
+            x: x,
+            y: y
+        });
+
+    if (error) {
+        alert("Error al guardar: " + error.message);
+        return;
+    }
+
+    modoAñadir = false;
+    document.getElementById("btnAñadir").textContent = "+ Añadir luminaria";
+    document.getElementById("estadoAñadir").textContent = "";
+
+    await cargarLuminarias();
+});
+
+
+let luminariaSeleccionada = null;
+
+// Abrir ficha de una luminaria
+async function abrirFicha(luz) {
+    luminariaSeleccionada = luz;
+
+    document.getElementById("fichaCodigo").textContent =
+        "Luminaria " + luz.codigo;
+
+    document.getElementById("fichaLuminaria").style.display = "flex";
+
+    await cargarHistorial(luz.id);
+}
+
+// Cargar historial de intervenciones
+async function cargarHistorial(id) {
+    const { data, error } = await supabaseClient
+        .from("mantenimientos")
+        .select("*")
+        .eq("luminaria_id", id)
+        .order("fecha", { ascending: false });
+
+    if (error) {
+        alert("Error al cargar historial: " + error.message);
+        return;
+    }
+
+    const revisiones = data.filter(i => i.tipo === "revision");
+    const cambios = data.filter(i => i.tipo === "bombilla");
+
+    document.getElementById("ultimaRevision").textContent =
+        revisiones.length ? revisiones[0].fecha : "Sin revisiones";
+
+    document.getElementById("ultimoCambio").textContent =
+        cambios.length ? cambios[0].fecha : "Sin sustituciones";
+
+    const historial = document.getElementById("historialLuminaria");
+
+    if (data.length === 0) {
+        historial.textContent = "Sin intervenciones registradas.";
+        return;
+    }
+
+    historial.innerHTML = "";
+
+    data.forEach(intervencion => {
+        const elemento = document.createElement("p");
+
+        elemento.textContent =
+            intervencion.fecha + " — " +
+            (intervencion.tipo === "revision"
+                ? "Revisión"
+                : "Cambio de bombilla") +
+            (intervencion.observaciones
+                ? " — " + intervencion.observaciones
+                : "");
+
+        historial.appendChild(elemento);
+    });
+}
+
+// Cerrar ficha
+function cerrarFicha() {
+    document.getElementById("fichaLuminaria").style.display = "none";
+    luminariaSeleccionada = null;
+}
+
+async function eliminarLuminaria() {
+
+    if (!luminariaSeleccionada) return;
+
+    const codigo = luminariaSeleccionada.codigo;
+
+    const confirmar = confirm(
+        "¿Quieres eliminar la luminaria " + codigo +
+        "?\n\nTambién se eliminará todo su historial. Esta acción no se puede deshacer."
+    );
+
+    if (!confirmar) return;
+
+    const { error } = await supabaseClient
+        .from("luminarias")
+        .delete()
+        .eq("id", luminariaSeleccionada.id);
+
+    if (error) {
+        alert("Error al eliminar: " + error.message);
+        return;
+    }
+
+    cerrarFicha();
+    await cargarLuminarias();
+
+    alert("Luminaria " + codigo + " eliminada correctamente.");
+}
+
+function mostrarFormularioIntervencion() {
+    document.getElementById("formularioIntervencion").style.display = "block";
+    document.getElementById("fechaIntervencion").value =
+        new Date().toISOString().slice(0, 10);
+}
+
+function ocultarFormularioIntervencion() {
+    document.getElementById("formularioIntervencion").style.display = "none";
+}
+
+async function guardarIntervencion() {
+    if (!luminariaSeleccionada) return;
+
+    const tipo = document.getElementById("tipoIntervencion").value;
+    const fecha = document.getElementById("fechaIntervencion").value;
+    const observaciones =
+        document.getElementById("observacionesIntervencion").value;
+
+    if (!fecha) {
+        alert("Selecciona una fecha.");
+        return;
+    }
+
+    const { error } = await supabaseClient
+        .from("mantenimientos")
+        .insert({
+            luminaria_id: luminariaSeleccionada.id,
+            tipo: tipo,
+            fecha: fecha,
+            observaciones: observaciones
+        });
+
+    if (error) {
+        alert("Error al guardar: " + error.message);
+        return;
+    }
+
+    document.getElementById("observacionesIntervencion").value = "";
+    ocultarFormularioIntervencion();
+
+    await cargarHistorial(luminariaSeleccionada.id);
+
+    alert("Intervención guardada correctamente.");
+}
+
+// Cargar luminarias al abrir la aplicación
+cargarLuminarias();
+
+</script>
+
+
+<div id="fichaLuminaria" style="
+    display:none;
+    position:fixed;
+    inset:0;
+    background:rgba(0,0,0,0.55);
+    z-index:1000;
+    align-items:center;
+    justify-content:center;
+    padding:20px;
+">
+    
+    <div style="
+        background:white;
+        padding:22px;
+        border-radius:12px;
+        width:100%;
+        max-width:500px;
+        max-height:85vh;
+        overflow-y:auto;
+        color:#222;
+    ">
+
+        <h2 id="fichaCodigo">Luminaria</h2>
+
+        <h3>Última revisión</h3>
+        <p id="ultimaRevision">Sin revisiones</p>
+
+        <h3>Último cambio de bombilla</h3>
+        <p id="ultimoCambio">Sin sustituciones</p>
+
+        <h3>Historial de intervenciones</h3>
+        <div id="historialLuminaria">
+            Sin intervenciones registradas.
+        </div>
+
+        <button onclick="mostrarFormularioIntervencion()">
+    + Registrar intervención
+</button>
+
+<div id="formularioIntervencion" style="display:none; margin-top:15px;">
+
+    <h3>Nueva intervención</h3>
+
+    <label>Tipo de intervención</label>
+    <select id="tipoIntervencion" style="width:100%; padding:10px;">
+        <option value="revision">Revisión</option>
+        <option value="bombilla">Cambio de bombilla</option>
+    </select>
+
+    <p>Fecha</p>
+    <input type="date" id="fechaIntervencion"
+           style="width:100%; padding:10px;">
+
+    <p>Observaciones</p>
+    <textarea id="observacionesIntervencion"
+              style="width:100%; padding:10px;"
+              rows="3"></textarea>
+
+    <p>
+        <button onclick="guardarIntervencion()">
+            Guardar intervención
+        </button>
+
+        <button onclick="ocultarFormularioIntervencion()"
+                style="background:#777;">
+            Cancelar
+        </button>
+    </p>
+</div>
+
+<button onclick="eliminarLuminaria()"
+        style="background:#b3261e; margin-top:12px;">
+    Eliminar luminaria
+</button>
+
+        <button onclick="cerrarFicha()" style="background:#777;">
+            Cerrar
+        </button>
+    </div>
+</div>
+
 
 </body>
 </html>
