@@ -1,0 +1,17 @@
+name: Mantener Supabase activo
+
+on:
+  schedule:
+    - cron: '0 7,15,23 * * *'
+  workflow_dispatch:
+
+jobs:
+  mantener:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Consultar Supabase
+        run: |
+          curl -f -sS \
+            "${{ secrets.SUPABASE_URL }}/rest/v1/luminarias?select=id&limit=1" \
+            -H "apikey: ${{ secrets.SUPABASE_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_KEY }}"
