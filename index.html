@@ -83,12 +83,36 @@ button.active {
 </header>
 
 <nav>
-    <button onclick="mostrarPlano(1)" id="b1" class="active">Plano 1</button>
+    <button onclick="mostrarPlano(1)" id="b1">Plano 1</button>
     <button onclick="mostrarPlano(2)" id="b2">Plano 2</button>
     <button onclick="mostrarPlano(3)" id="b3">Plano 3</button>
+    <button onclick="mostrarPlano(4)" id="b4" class="active">Plano 4</button>
+    <button onclick="mostrarResumen()" id="bResumen">Resumen</button>
 </nav>
 
-<div style="text-align:center; padding:10px;">
+<div id="panelResumen" style="
+    display:none;
+    padding:20px;
+    background:white;
+    margin:10px;
+    border-radius:8px;
+">
+    <h2>Resumen de luminarias</h2>
+
+    <h3 id="totalLuminarias">Total de luminarias: 0</h3>
+
+    <h3 id="fechaRevisionGeneral">
+        Fecha de revisión general:
+    </h3>
+
+    <div id="tablaResumen"></div>
+
+    <button onclick="cerrarResumen()" style="margin-top:15px;">
+        Volver a los planos
+    </button>
+</div>
+
+<div id="zonaAñadir" style="text-align:center; padding:10px;">
     <button id="btnAñadir" style="display:none;"
         onclick="activarModoAñadir()">
         + Añadir luminaria
@@ -109,18 +133,25 @@ button.active {
 <script>
 function mostrarPlano(numero) {
 
+    document.getElementById("panelResumen").style.display = "none";
+    document.getElementById("plano").style.display = "block";
+    document.getElementById("zonaAñadir").style.display = "block";
+    document.getElementById("bResumen").classList.remove("active");
+
     const nombres = {
         1: "Planos Luces 1.png",
         2: "Planos Luces 2.png",
-        3: "Planos Luces 3.png"
+        3: "Planos Luces 3.png",
+        4: "Planos Luces 4.png"
     };
 
     document.getElementById("imagen").src = nombres[numero];
+    document.getElementById("marcadores").innerHTML = "";
 
     planoActual = numero;
-    cargarLuminarias();    
+    cargarLuminarias();
 
-    for (let i = 1; i <= 3; i++) {
+    for (let i = 1; i <= 4; i++) {
         document.getElementById("b" + i)
             .classList.toggle("active", i === numero);
     }
@@ -164,7 +195,9 @@ async function cerrarSesion() {
     actualizarSesion(null);
 }
 
+let usuarioAutenticado = false;
 function actualizarSesion(session) {
+    usuarioAutenticado = !!session;
     document.getElementById("acceso").style.display =
         session ? "none" : "block";
 
@@ -172,7 +205,13 @@ function actualizarSesion(session) {
         session ? "block" : "none";
 
     document.getElementById("btnAñadir").style.display =
-        session ? "inline-block" : "none";        
+        session ? "inline-block" : "none";       
+
+        document.getElementById("btnIntervencion").style.display =
+    session ? "inline-block" : "none";
+
+document.getElementById("btnEliminar").style.display =
+    session ? "inline-block" : "none"; 
 }
 
 supabaseClient.auth.getSession().then(({ data }) => {
@@ -209,8 +248,30 @@ async function cargarLuminarias() {
         return;
     }
 
-    const contenedor = document.getElementById("marcadores");
-    contenedor.innerHTML = "";
+    // Consultar los cambios de bombilla de estas luminarias
+const cambiosPorLuminaria = {};
+
+if (data.length > 0) {
+    const { data: intervenciones, error: errorHistorial } =
+        await supabaseClient
+            .from("mantenimientos")
+            .select("luminaria_id")
+            .eq("tipo", "bombilla")
+            .in("luminaria_id", data.map(luz => luz.id));
+
+    if (errorHistorial) {
+        console.error(errorHistorial);
+        return;
+    }
+
+    intervenciones.forEach(intervencion => {
+        const id = intervencion.luminaria_id;
+        cambiosPorLuminaria[id] = (cambiosPorLuminaria[id] || 0) + 1;
+    });
+}
+
+const contenedor = document.getElementById("marcadores");
+contenedor.innerHTML = "";
 
     data.forEach(luz => {
         const punto = document.createElement("button");
@@ -221,7 +282,7 @@ async function cargarLuminarias() {
     left:${luz.x}%;
     top:${luz.y}%;
     transform:translate(-50%,-50%);
-    background:#e6ae20;
+    background:${(cambiosPorLuminaria[luz.id] || 0) % 2 === 1 ? "#e53935" : "#e6ae20"};
     color:#222;
     border:1px solid white;
     border-radius:50%;
@@ -233,13 +294,96 @@ async function cargarLuminarias() {
     display:flex;
     align-items:center;
     justify-content:center;
+    touch-action:auto;
+    cursor:default;
     pointer-events:auto;
 `;
 
-        punto.onclick = (e) => {
+  let inicioX, inicioY;
+let posicionInicialX = luz.x;
+let posicionInicialY = luz.y;
+let arrastrando = false;
+
+punto.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
     e.stopPropagation();
-    abrirFicha(luz);
-};
+
+    inicioX = e.clientX;
+    inicioY = e.clientY;
+    arrastrando = false;
+
+    punto.setPointerCapture(e.pointerId);
+    punto.style.cursor = "grabbing";
+});
+
+punto.addEventListener("pointermove", (e) => {
+    if (!usuarioAutenticado) return;
+    if (inicioX === undefined) return;
+
+    const distancia = Math.hypot(
+        e.clientX - inicioX,
+        e.clientY - inicioY
+    );
+
+    if (distancia > 5) {
+        arrastrando = true;
+    }
+
+    if (!arrastrando) return;
+
+    const rect = document.getElementById("superficie")
+        .getBoundingClientRect();
+
+    const x = ((e.clientX - rect.left) / rect.width) * 100;
+    const y = ((e.clientY - rect.top) / rect.height) * 100;
+
+    luz.x = Math.max(0, Math.min(100, x));
+    luz.y = Math.max(0, Math.min(100, y));
+
+    punto.style.left = luz.x + "%";
+    punto.style.top = luz.y + "%";
+});
+
+punto.addEventListener("pointerup", async (e) => {
+    if (inicioX === undefined) return;
+
+    inicioX = undefined;
+    punto.style.cursor = "grab";
+
+    if (!arrastrando) {
+        abrirFicha(luz);
+        return;
+    }
+
+    const { error } = await supabaseClient
+        .from("luminarias")
+        .update({
+            x: luz.x,
+            y: luz.y
+        })
+        .eq("id", luz.id);
+
+    if (error) {
+        alert("Error al guardar la posición: " + error.message);
+        luz.x = posicionInicialX;
+        luz.y = posicionInicialY;
+        punto.style.left = luz.x + "%";
+        punto.style.top = luz.y + "%";
+        return;
+    }
+
+    posicionInicialX = luz.x;
+    posicionInicialY = luz.y;
+});
+
+punto.addEventListener("pointercancel", () => {
+    inicioX = undefined;
+    luz.x = posicionInicialX;
+    luz.y = posicionInicialY;
+    punto.style.left = luz.x + "%";
+    punto.style.top = luz.y + "%";
+    punto.style.cursor = "grab";
+});
 
         contenedor.appendChild(punto);
     });
@@ -255,19 +399,26 @@ document.getElementById("superficie").addEventListener("click", async (e) => {
     const x = ((e.clientX - rect.left) / rect.width) * 100;
     const y = ((e.clientY - rect.top) / rect.height) * 100;
 
-    const { data: ultima } = await supabaseClient
-        .from("luminarias")
-        .select("codigo")
-        .order("created_at", { ascending: false })
-        .limit(1);
+    const { data: existentes, error: errorNumeracion } = await supabaseClient
+    .from("luminarias")
+    .select("codigo")
+    .eq("plano", planoActual);
 
-    let numero = 1;
+if (errorNumeracion) {
+    alert("Error al obtener numeración: " + errorNumeracion.message);
+    return;
+}
 
-    if (ultima && ultima.length > 0) {
-        numero = parseInt(ultima[0].codigo.replace("L", "")) + 1;
+let numero = 1;
+
+existentes.forEach(luz => {
+    const n = parseInt(luz.codigo.replace("L", ""));
+    if (n >= numero) {
+        numero = n + 1;
     }
+});
 
-    const codigo = "L" + String(numero).padStart(3, "0");
+const codigo = "L" + String(numero).padStart(3, "0");
 
     const { error } = await supabaseClient
         .from("luminarias")
@@ -283,9 +434,7 @@ document.getElementById("superficie").addEventListener("click", async (e) => {
         return;
     }
 
-    modoAñadir = false;
-    document.getElementById("btnAñadir").textContent = "+ Añadir luminaria";
-    document.getElementById("estadoAñadir").textContent = "";
+    
 
     await cargarLuminarias();
 });
@@ -428,8 +577,111 @@ async function guardarIntervencion() {
     ocultarFormularioIntervencion();
 
     await cargarHistorial(luminariaSeleccionada.id);
+    await cargarLuminarias();
 
     alert("Intervención guardada correctamente.");
+
+  }
+
+  async function mostrarResumen() {
+
+    document.getElementById("panelResumen").style.display = "block";
+    document.getElementById("plano").style.display = "none";
+    document.getElementById("zonaAñadir").style.display = "none";
+
+    for (let i = 1; i <= 4; i++) {
+        document.getElementById("b" + i).classList.remove("active");
+    }
+
+    document.getElementById("bResumen").classList.add("active");
+
+    const tabla = document.getElementById("tablaResumen");
+    tabla.textContent = "Cargando datos...";
+
+    const { data: luminarias, error } = await supabaseClient
+        .from("luminarias")
+        .select("id, codigo, plano")
+        .order("plano")
+        .order("codigo");
+
+    if (error) {
+        tabla.textContent = "Error al cargar luminarias: " + error.message;
+        return;
+    }
+
+    const { data: intervenciones, error: errorHistorial } =
+        await supabaseClient
+            .from("mantenimientos")
+            .select("luminaria_id, tipo, fecha");
+
+    if (errorHistorial) {
+        tabla.textContent = "Error al cargar intervenciones: " + errorHistorial.message;
+        return;
+    }
+
+    let ultimaRevision = null;
+    const ultimosCambios = {};
+
+    intervenciones.forEach(i => {
+        if (i.tipo === "revision" &&
+            (!ultimaRevision || i.fecha > ultimaRevision)) {
+            ultimaRevision = i.fecha;
+        }
+
+        if (i.tipo === "bombilla" &&
+            (!ultimosCambios[i.luminaria_id] ||
+             i.fecha > ultimosCambios[i.luminaria_id])) {
+            ultimosCambios[i.luminaria_id] = i.fecha;
+        }
+    });
+
+    document.getElementById("totalLuminarias").textContent =
+        "Total de luminarias: " + luminarias.length;
+
+    document.getElementById("fechaRevisionGeneral").textContent =
+        "Fecha de revisión general: " +
+        (ultimaRevision || "Sin revisiones registradas");
+
+    tabla.innerHTML = "";
+
+    const tablaHTML = document.createElement("table");
+    tablaHTML.style.width = "100%";
+    tablaHTML.style.borderCollapse = "collapse";
+
+    tablaHTML.innerHTML = `
+        <tr style="background:#263746; color:white;">
+            <th style="padding:10px;">Plano</th>
+            <th style="padding:10px;">Luminaria</th>
+            <th style="padding:10px;">Último cambio de bombilla</th>
+        </tr>
+    `;
+
+    luminarias.forEach(luz => {
+        const fila = document.createElement("tr");
+
+        [ "Plano " + luz.plano,
+          luz.codigo,
+          ultimosCambios[luz.id] || "Sin cambios"
+        ].forEach(valor => {
+            const celda = document.createElement("td");
+            celda.textContent = valor;
+            celda.style.padding = "9px";
+            celda.style.borderBottom = "1px solid #ddd";
+            fila.appendChild(celda);
+        });
+
+        tablaHTML.appendChild(fila);
+    });
+
+    tabla.appendChild(tablaHTML);
+}
+
+function cerrarResumen() {
+    document.getElementById("panelResumen").style.display = "none";
+    document.getElementById("plano").style.display = "block";
+    document.getElementById("zonaAñadir").style.display = "block";
+    document.getElementById("bResumen").classList.remove("active");
+    mostrarPlano(planoActual);
 }
 
 // Cargar luminarias al abrir la aplicación
@@ -473,7 +725,7 @@ cargarLuminarias();
             Sin intervenciones registradas.
         </div>
 
-        <button onclick="mostrarFormularioIntervencion()">
+        <button id="btnIntervencion" onclick="mostrarFormularioIntervencion()">
     + Registrar intervención
 </button>
 
@@ -508,7 +760,7 @@ cargarLuminarias();
     </p>
 </div>
 
-<button onclick="eliminarLuminaria()"
+<button id="btnEliminar" onclick="eliminarLuminaria()"
         style="background:#b3261e; margin-top:12px;">
     Eliminar luminaria
 </button>
