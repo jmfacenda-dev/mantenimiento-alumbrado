@@ -248,15 +248,14 @@ async function cargarLuminarias() {
         return;
     }
 
-    // Consultar los cambios de bombilla de estas luminarias
-const cambiosPorLuminaria = {};
+    // Consultar intervenciones para determinar luminarias fundidas
+const estadoPorLuminaria = {};
 
 if (data.length > 0) {
     const { data: intervenciones, error: errorHistorial } =
         await supabaseClient
             .from("mantenimientos")
-            .select("luminaria_id")
-            .eq("tipo", "bombilla")
+            .select("luminaria_id, tipo, fecha, observaciones, created_at")
             .in("luminaria_id", data.map(luz => luz.id));
 
     if (errorHistorial) {
@@ -264,9 +263,56 @@ if (data.length > 0) {
         return;
     }
 
-    intervenciones.forEach(intervencion => {
-        const id = intervencion.luminaria_id;
-        cambiosPorLuminaria[id] = (cambiosPorLuminaria[id] || 0) + 1;
+    intervenciones.forEach(i => {
+        const id = i.luminaria_id;
+
+        if (!estadoPorLuminaria[id]) {
+            estadoPorLuminaria[id] = {
+            ultimaFundida: 0,
+            ultimoCambio: 0,
+            ultimaSolicitudSensor: 0,
+            ultimoCambioSensor: 0
+            };
+        }
+
+        const fechaRegistro = new Date(i.created_at || i.fecha).getTime();
+
+        if (
+            i.observaciones &&
+            i.observaciones.toLowerCase().includes("fundida")
+        ) {
+            estadoPorLuminaria[id].ultimaFundida = Math.max(
+                estadoPorLuminaria[id].ultimaFundida,
+                fechaRegistro
+            );
+        }
+
+if (
+    i.observaciones &&
+    i.observaciones.toLowerCase().includes("cambiar sensor")
+) {
+    estadoPorLuminaria[id].ultimaSolicitudSensor = Math.max(
+        estadoPorLuminaria[id].ultimaSolicitudSensor,
+        fechaRegistro
+    );
+}
+
+if (
+    i.observaciones &&
+    i.observaciones.toLowerCase().includes("sensor cambiado")
+) {
+    estadoPorLuminaria[id].ultimoCambioSensor = Math.max(
+        estadoPorLuminaria[id].ultimoCambioSensor,
+        fechaRegistro
+    );
+}
+
+        if (i.tipo === "bombilla") {
+            estadoPorLuminaria[id].ultimoCambio = Math.max(
+                estadoPorLuminaria[id].ultimoCambio,
+                fechaRegistro
+            );
+        }
     });
 }
 
@@ -282,7 +328,15 @@ contenedor.innerHTML = "";
     left:${luz.x}%;
     top:${luz.y}%;
     transform:translate(-50%,-50%);
-    background:${(cambiosPorLuminaria[luz.id] || 0) % 2 === 1 ? "#e53935" : "#e6ae20"};
+  background:${
+    (estadoPorLuminaria[luz.id]?.ultimaSolicitudSensor || 0) >
+    (estadoPorLuminaria[luz.id]?.ultimoCambioSensor || 0)
+        ? "#2196f3"
+        : (estadoPorLuminaria[luz.id]?.ultimaFundida || 0) >
+          (estadoPorLuminaria[luz.id]?.ultimoCambio || 0)
+            ? "#e53935"
+            : "#e6ae20"
+};
     color:#222;
     border:1px solid white;
     border-radius:50%;
